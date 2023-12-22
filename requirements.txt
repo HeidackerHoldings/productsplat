@@ -1,0 +1,8 @@
+sentencepiece
+transformers
+tensorflow[and-cuda]
+opencv-python
+modelscope
+tqdm
+plyfile
+pycolmap
