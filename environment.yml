@@ -16,9 +16,8 @@ dependencies:
   - tqdm
   - pip:
     - pycolmap
-    - sentencepiece
-    - transformers
-    - tensorflow[and-cuda]
     - opencv-python
-    - modelscope
-    - tensorflow[and-cuda]
+    - Pillow
+    - gdown
+    - fairscale
+    - timm

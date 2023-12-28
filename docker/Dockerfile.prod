@@ -1,0 +1,41 @@
+FROM colmap/colmap
+
+# Install prereqs
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    libgl1-mesa-glx \
+    libegl1-mesa \
+    libxrandr2 \
+    libxss1 \
+    libxcursor1 \
+    libxcomposite1 \
+    libasound2 \
+    libxi6 \
+    libxtst6
+
+# Install Conda
+RUN curl https://repo.anaconda.com/archive/Anaconda3-2023.09-0-Linux-x86_64.sh -o ./anaconda.sh
+RUN bash ./anaconda.sh -b -p /root/anaconda3 && rm ./anaconda.sh
+ENV PATH /root/anaconda3/bin:$PATH
+RUN conda update -n base -c defaults conda
+
+# Setup Conda env
+WORKDIR /app
+COPY environment.yml /app
+RUN conda env create -f environment.yml
+RUN conda init
+
+# Install submodules
+ENV TORCH_CUDA_ARCH_LIST "8.6"
+COPY submodules /app/submodules
+RUN conda run -n productsplat pip install submodules/simple-knn
+RUN conda run -n productsplat pip install submodules/diff-gaussian-rasterization
+RUN git submodule foreach --recursive git reset --hard
+
+# Download ViTMatte model and requirements
+RUN conda run -n productsplat pip install 'git+https://github.com/facebookresearch/detectron2.git'
+RUN conda run -n productsplat setup.py
+
+# Transfer repo contents
+COPY . /app
