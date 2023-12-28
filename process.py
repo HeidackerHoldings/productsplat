@@ -6,8 +6,15 @@ from pathlib import Path
 from modelscope.pipelines import pipeline
 from modelscope.utils.constant import Tasks
 from modelscope.outputs import OutputKeys
+import shutil
+import pycolmap
+import argparse
 
 remove_bg = pipeline(Tasks.universal_matting, model="damo/cv_unet_universal-matting")
+
+DATA = (Path(__file__).parent / "data").resolve()
+INPUT = DATA / "vase4"
+OUTPUT = DATA / "out"
 
 
 def postprocess_frame(frame: np.ndarray) -> np.ndarray:
@@ -56,9 +63,26 @@ def process_video(file: Path, n: int) -> np.ndarray:
     return frames
 
 
-if __name__ == "__main__":
-    HERE = Path(__file__).parent
-    DATA = HERE.joinpath("data/chawan")
-    frames = process_video(DATA, 200)
+def save_frames(frames: list[np.ndarray], output: Path = OUTPUT / "input"):
+    output.mkdir(exist_ok=True)
     for i, frame in enumerate(frames):
-        cv2.imwrite(f"out/{i}.png", frame)
+        cv2.imwrite(str(output / f"{i}.png"), frame)    
+
+
+def colmap_pipeline(file: Path):
+    ...
+
+
+def reset(clean: bool =True):
+    if clean and OUTPUT.exists():
+        shutil.rmtree(OUTPUT)
+    OUTPUT.mkdir(exist_ok=True)
+
+def main():
+    reset(clean=True)
+    save_frames(process_video(INPUT, 20))
+
+
+
+if __name__ == "__main__":
+    main()

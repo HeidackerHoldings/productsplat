@@ -1,17 +1,24 @@
-name: gaussian_splatting
+name: productsplat
 channels:
   - pytorch
+  - nvidia
   - conda-forge
   - defaults
 dependencies:
+  - python=3.10
+  - pip
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
+  - plyfile
   - cudatoolkit=11.6
-  - plyfile=0.8.1
-  - python=3.7.13
-  - pip=22.3.1
-  - pytorch=1.12.1
-  - torchaudio=0.12.1
-  - torchvision=0.13.1
   - tqdm
   - pip:
-    - submodules/diff-gaussian-rasterization
-    - submodules/simple-knn
+    - pycolmap
+    - sentencepiece
+    - transformers
+    - tensorflow[and-cuda]
+    - opencv-python
+    - modelscope
+    - tensorflow[and-cuda]
