@@ -3,14 +3,14 @@ import os
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
-from modelscope.pipelines import pipeline
-from modelscope.utils.constant import Tasks
-from modelscope.outputs import OutputKeys
+#from modelscope.pipelines import pipeline
+#from modelscope.utils.constant import Tasks
+#from modelscope.outputs import OutputKeys
 import shutil
 import pycolmap
 import argparse
 
-remove_bg = pipeline(Tasks.universal_matting, model="damo/cv_unet_universal-matting")
+#remove_bg = pipeline(Tasks.universal_matting, model="damo/cv_unet_universal-matting")
 
 DATA = (Path(__file__).parent / "data").resolve()
 INPUT = DATA / "vase4"
@@ -18,7 +18,8 @@ OUTPUT = DATA / "out"
 
 
 def postprocess_frame(frame: np.ndarray) -> np.ndarray:
-    return remove_bg(cv2.flip(frame, 1))[OutputKeys.OUTPUT_IMG]
+    return frame
+    #return remove_bg(cv2.flip(frame, 1))[OutputKeys.OUTPUT_IMG]
 
 
 def process_video(file: Path, n: int) -> np.ndarray:

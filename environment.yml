@@ -17,7 +17,6 @@ dependencies:
   - pip:
     - pycolmap
     - opencv-python
-    - Pillow
     - gdown
-    - fairscale
-    - timm
+    - transformers
+    
