@@ -18,5 +18,5 @@ dependencies:
     - pycolmap
     - opencv-python
     - gdown
-    - transformers
+    - fairscale
     

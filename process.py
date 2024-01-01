@@ -3,23 +3,13 @@ import os
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
-#from modelscope.pipelines import pipeline
-#from modelscope.utils.constant import Tasks
-#from modelscope.outputs import OutputKeys
+from matting import get_matted_frames
 import shutil
-import pycolmap
 import argparse
-
-#remove_bg = pipeline(Tasks.universal_matting, model="damo/cv_unet_universal-matting")
 
 DATA = (Path(__file__).parent / "data").resolve()
 INPUT = DATA / "vase4"
 OUTPUT = DATA / "out"
-
-
-def postprocess_frame(frame: np.ndarray) -> np.ndarray:
-    return frame
-    #return remove_bg(cv2.flip(frame, 1))[OutputKeys.OUTPUT_IMG]
 
 
 def process_video(file: Path, n: int) -> np.ndarray:
@@ -47,14 +37,13 @@ def process_video(file: Path, n: int) -> np.ndarray:
         video_indices[current_video_index].append(int(adjusted_index))
 
     frames = []
-    with tqdm(total=n) as pbar:
+    with tqdm(total=n, desc="Extracting Frames") as pbar:
         for video, index in zip(streams, video_indices):
             for i in index:
                 video.set(cv2.CAP_PROP_POS_FRAMES, i)
 
                 ret, frame = video.read()
                 if ret:
-                    frame = postprocess_frame(frame)
                     frames.append(frame)
 
                 pbar.update(1)
@@ -81,7 +70,9 @@ def reset(clean: bool =True):
 
 def main():
     reset(clean=True)
-    save_frames(process_video(INPUT, 20))
+    frames = process_video(INPUT, 20)
+    frames = get_matted_frames(frames)
+    save_frames(frames)
 
 
 
