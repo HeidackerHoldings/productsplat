@@ -1,16 +1,18 @@
 from rembg import remove as rmbg, new_session
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 import cv2
-from transformers import VitMatteImageProcessor, VitMatteForImageMatting
+from transformers import VitMatteForImageMatting
 import torch
-from torchvision.transforms import functional as F
 from tqdm import tqdm
 
 
 def get_masks(images: np.ndarray) -> list[np.ndarray]:
     session = new_session()
-    return [rmbg(image, session=session, only_mask=True) for image in tqdm(images, desc="Creating Trimaps")]
+    return [
+        rmbg(image, session=session, only_mask=True)
+        for image in tqdm(images, desc="Creating Trimaps")
+    ]
 
 
 def get_crops(masks: list[np.ndarray]) -> list[tuple[np.ndarray, np.ndarray]]:
@@ -67,48 +69,71 @@ def apply_crop(image: np.ndarray, crop: tuple[np.ndarray, np.ndarray]) -> np.nda
     return image[min_coords[0] : max_coords[0] + 1, min_coords[1] : max_coords[1] + 1]
 
 
+def pad_image(image: np.ndarray, val: int = 32) -> np.ndarray:
+    image = Image.fromarray(image)
+    width, height = image.size
+    width = ((width // val) + 1) * val
+    height = ((height // val) + 1) * val
+    return np.array(ImageOps.pad(image, (width, height), centering=(0, 0)))
+
+
 def vitmatte(
-    images: list[np.ndarray], trimaps: list[np.ndarray], lowmem: bool = True, scale: int = 2) -> list[np.ndarray]:
-    processor = VitMatteImageProcessor.from_pretrained(
-        "hustvl/vitmatte-small-distinctions-646"
-    )
+    images: list[np.ndarray],
+    trimaps: list[np.ndarray],
+    lowmem: bool = False,
+    scale: int = 2,
+) -> list[np.ndarray]:
     model = VitMatteForImageMatting.from_pretrained(
         "hustvl/vitmatte-small-distinctions-646"
-    )
-    model.to("cuda")
+    ).to("cuda")
 
-    images = [Image.fromarray(image) for image in images]
-    trimaps = [Image.fromarray(np.uint8(trimap)).convert("L") for trimap in trimaps]
+    matted, alphas = [], []
+    for image, trimap in tqdm(
+        zip(images, trimaps), total=len(images), desc="Performing ViTMatte"
+    ):
+        image = pad_image(image, 32 * (scale if lowmem else 1))
+        trimap = pad_image(np.uint8(trimap), 32 * (scale if lowmem else 1))
 
-    sizes = [image.size for image in images]
-    if lowmem:
-        images = [image.resize((dim // scale for dim in image.size)) for image in images]
-        trimaps = [
-            trimap.resize((dim // scale for dim in trimap.size)) for trimap in trimaps
-        ]
-
-    preds = []
-    for image, trimap, original_size in tqdm(zip(images, trimaps, sizes), desc="Running ViTMatte", total=len(images)):
-        pixels = processor(
-            images=image, trimaps=trimap, return_tensors="pt"
-        ).pixel_values
-        with torch.no_grad():
-            outputs = model(pixels.to("cuda"))
-        alphas = outputs.alphas.flatten(0, 2)
-        prediction = F.to_pil_image(alphas)
+        original_image = image.copy()
 
         if lowmem:
-            prediction = prediction.resize(original_size)
+            image = np.array(
+                Image.fromarray(image).resize(
+                    (image.shape[1] // scale, image.shape[0] // scale)
+                )
+            )
+            trimap = np.array(
+                Image.fromarray(trimap).resize(
+                    (trimap.shape[1] // scale, trimap.shape[0] // scale)
+                )
+            )
 
-        preds.append(np.array(prediction))
+        pixels = torch.concatenate(
+            [
+                torch.tensor(image, device="cuda"),
+                torch.tensor(trimap, device="cuda")[..., None],
+            ],
+            axis=2,
+        )
+        pixels = pixels.permute(2, 0, 1)[None, ...].float() / 255
 
-    return preds
+        with torch.no_grad():
+            alpha = model(pixels).alphas
 
-def apply_mask_predictions(frames: list[np.ndarray], masks: list[np.ndarray]) -> list[np.ndarray]:
-    images = []
-    for frame, mask in zip(frames, masks):
-        images.append(np.concatenate([frame, mask[..., None]], axis=-1))
-    return images
+        alpha = alpha.squeeze(0).permute(1, 2, 0).to("cpu").numpy()
+        alpha = np.uint8(alpha * 255)
+
+        if lowmem:
+            alpha = np.array(
+                Image.fromarray(alpha[..., 0]).resize((alpha.shape[1] * scale, alpha.shape[0] * scale))
+            )[..., None]
+
+        image = np.concatenate([original_image, alpha], axis=2)
+
+        matted.append(image)
+        alphas.append(alpha)
+
+    return matted, alphas
 
 
 def get_matted_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
@@ -122,7 +147,23 @@ def get_matted_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
     trimaps = [apply_crop(trimap, crop) for trimap, crop in zip(trimaps, crops)]
 
     # Alpha Matting
-    preds = vitmatte(frames, trimaps)
-    frames = apply_mask_predictions(frames, preds)
+    matted, alphas = vitmatte(frames, trimaps, lowmem=True, scale=3)
 
-    return frames
+    # Cropping round 2
+    masks = [alpha > 0 for alpha in alphas]
+    crops = get_crops(masks)
+    matted = [apply_crop(image, crop) for image, crop in zip(matted, crops)]
+
+    # Padding to same size
+    max_width = max(image.shape[1] for image in matted)
+    max_height = max(image.shape[0] for image in matted)
+    matted = [
+        np.array(
+            ImageOps.pad(
+                Image.fromarray(image), (max_width, max_height), centering=(0, 0)
+            )
+        )
+        for image in matted
+    ]
+
+    return matted

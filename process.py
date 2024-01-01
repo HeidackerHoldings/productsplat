@@ -70,7 +70,7 @@ def reset(clean: bool =True):
 
 def main():
     reset(clean=True)
-    frames = process_video(INPUT, 20)
+    frames = process_video(INPUT, 1)
     frames = get_matted_frames(frames)
     save_frames(frames)
 
