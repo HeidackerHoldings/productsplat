@@ -59,10 +59,11 @@ def reset(path: Path, clean: bool =True):
     if clean and path.exists():
         shutil.rmtree(path)
     path.mkdir(exist_ok=True)
+    (path / "distorted").mkdir(exist_ok=True)
 
 
 def run_command(command: str, args: dict[str, str]) -> int:
-    for key, value in args:
+    for key, value in args.items():
         if value is None:
             command += f" {key}"
         else:
@@ -74,6 +75,7 @@ def extract_features(database: Path, images: Path) -> None:
     args = {
         "--database_path": database,
         "--image_path": images,
+        "--ImageReader.camera_model": "OPENCV",
         "--SiftExtraction.use_gpu": "1"
     }
     if run_command("colmap feature_extractor", args) != 0:
@@ -100,45 +102,50 @@ def incremental_mapping(database: Path, images: Path, output: Path):
         raise RuntimeError("Incremental mapping failed")
 
 
-def undistort(images: Path, output: Path):
-    return
+def undistort(images: Path, distorted: Path, output: Path):
     args = {
         "--image_path": images,
-        "--input_path": None
+        "--input_path": distorted / "0",
+        "--output_path": output,
+        "--output_type": "COLMAP"
     }
+    if run_command("colmap image_undistorter", args) != 0:
+        raise RuntimeError("Image undistortion failed")
+    
+    # For some reason sparse/* needs to be sparse/0/*
+    sparse = output / "sparse"
+    temp = output / "temp"
+    shutil.move(sparse, temp)
+    shutil.move(temp, sparse / "0")
 
-    ## We need to undistort our images into ideal pinhole intrinsics.
-    img_undist_cmd = (colmap_command + " image_undistorter \
-        --image_path " + args.source_path + "/input \
-        --input_path " + args.source_path + "/distorted/sparse/0 \
-        --output_path " + args.source_path + "\
-        --output_type COLMAP")
-    exit_code = os.system(img_undist_cmd)
-    if exit_code != 0:
-        logging.error(f"Mapper failed with code {exit_code}. Exiting.")
-        exit(exit_code)
+    # Move back alpha matted images into images dir
+    shutil.rmtree(output / "images")
+    shutil.copytree(images, output / "images")
+
 
 
 def main():
 
     DATA = (Path(__file__).parent / "data").resolve()
-    INPUT = DATA / "vase4"
+    VIDEOS = DATA / "vase4"
     OUTPUT = DATA / "out"
+    INPUT = OUTPUT / "input"
+    DISTORTED = OUTPUT / "distorted"
+    DB = OUTPUT / "db.db"
 
     # Cleanup
     reset(OUTPUT, clean=True)
 
     # Create training images
-    frames = process_video(INPUT, 5)
+    frames = process_video(VIDEOS, 20)
     frames = get_matted_frames(frames)
     save_frames(frames, OUTPUT / "input")
 
     # Structure from motion
-    DB = OUTPUT / "db.db"
-    INPUT = OUTPUT / "input"
     extract_features(DB, INPUT)
     exhausive_matching(DB)
-    incremental_mapping(DB, INPUT, OUTPUT)
+    incremental_mapping(DB, INPUT, DISTORTED)
+    undistort(INPUT, DISTORTED, OUTPUT)
 
     # Gaussian Splatting
     ...
