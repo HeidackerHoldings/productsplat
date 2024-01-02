@@ -15,8 +15,9 @@ dependencies:
   - cudatoolkit=11.6
   - tqdm
   - pip:
-    - pycolmap
     - opencv-python
+    - Pillow
     - gdown
     - fairscale
-    
+    - transformers
+    - rembg

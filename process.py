@@ -5,12 +5,7 @@ from tqdm import tqdm
 from pathlib import Path
 from matting import get_matted_frames
 import shutil
-import pycolmap
 import argparse
-
-DATA = (Path(__file__).parent / "data").resolve()
-INPUT = DATA / "vase4"
-OUTPUT = DATA / "out"
 
 
 def process_video(file: Path, n: int) -> np.ndarray:
@@ -54,39 +49,96 @@ def process_video(file: Path, n: int) -> np.ndarray:
     return frames
 
 
-def save_frames(frames: list[np.ndarray], output: Path = OUTPUT / "input"):
+def save_frames(frames: list[np.ndarray], output: Path):
     output.mkdir(exist_ok=True)
     for i, frame in enumerate(frames):
         cv2.imwrite(str(output / f"{i}.png"), frame)    
 
 
-def colmap_pipeline(file: Path):
-    pycolmap.extract_features(database_path, file)
+def reset(path: Path, clean: bool =True):
+    if clean and path.exists():
+        shutil.rmtree(path)
+    path.mkdir(exist_ok=True)
 
 
-def reset(clean: bool =True):
-    if clean and OUTPUT.exists():
-        shutil.rmtree(OUTPUT)
-    OUTPUT.mkdir(exist_ok=True)
+def run_command(command: str, args: dict[str, str]) -> int:
+    for key, value in args:
+        if value is None:
+            command += f" {key}"
+        else:
+            command += f" {key} {value}"
+    return os.system(command)
+
+
+def extract_features(database: Path, images: Path) -> None:
+    args = {
+        "--database_path": database,
+        "--image_path": images,
+        "--SiftExtraction.use_gpu": "1"
+    }
+    if run_command("colmap feature_extractor", args) != 0:
+        raise RuntimeError("Feature extraction failed")
+
+
+def exhausive_matching(database: Path):
+    args = {
+        "--database_path": database,
+        "--SiftMatching.use_gpu": "1",
+    }
+    if run_command("colmap exhaustive_matcher", args) != 0:
+        raise RuntimeError("Feature matching failed")
+
+
+def incremental_mapping(database: Path, images: Path, output: Path):
+    args = {
+        "--database_path": database,
+        "--image_path": images,
+        "--output_path": output,
+        "--Mapper.ba_global_function_tolerance=0.000001": None
+    }
+    if run_command("colmap mapper", args) != 0:
+        raise RuntimeError("Incremental mapping failed")
+
+
+def undistort(images: Path, output: Path):
+    return
+    args = {
+        "--image_path": images,
+        "--input_path": None
+    }
+
+    ## We need to undistort our images into ideal pinhole intrinsics.
+    img_undist_cmd = (colmap_command + " image_undistorter \
+        --image_path " + args.source_path + "/input \
+        --input_path " + args.source_path + "/distorted/sparse/0 \
+        --output_path " + args.source_path + "\
+        --output_type COLMAP")
+    exit_code = os.system(img_undist_cmd)
+    if exit_code != 0:
+        logging.error(f"Mapper failed with code {exit_code}. Exiting.")
+        exit(exit_code)
+
 
 def main():
 
+    DATA = (Path(__file__).parent / "data").resolve()
+    INPUT = DATA / "vase4"
+    OUTPUT = DATA / "out"
+
     # Cleanup
-    reset(clean=True)
+    reset(OUTPUT, clean=True)
 
     # Create training images
-    frames = process_video(INPUT, 20)
+    frames = process_video(INPUT, 5)
     frames = get_matted_frames(frames)
-    save_frames(frames)
+    save_frames(frames, OUTPUT / "input")
 
     # Structure from motion
     DB = OUTPUT / "db.db"
-    MVS = OUTPUT / "mvs"
     INPUT = OUTPUT / "input"
-    pycolmap.extract_features(DB, INPUT)
-    pycolmap.match_exhaustive(DB)
-    maps = pycolmap.incremental_mapping(DB, INPUT, OUTPUT)
-    maps[0].write(OUTPUT)
+    extract_features(DB, INPUT)
+    exhausive_matching(DB)
+    incremental_mapping(DB, INPUT, OUTPUT)
 
     # Gaussian Splatting
     ...

@@ -31,10 +31,12 @@ ENV TORCH_CUDA_ARCH_LIST "8.6"
 COPY submodules /app/submodules
 RUN conda run -n productsplat pip install submodules/simple-knn
 RUN conda run -n productsplat pip install submodules/diff-gaussian-rasterization
+# Currently unstable, just use colmap CLI commands
+#RUN git clone -b v0.4.0 --recursive https://github.com/colmap/pycolmap.git
+#RUN conda run -n productsplat pip install submodules/pycolmap
 RUN rm -r submodules
 
 # Download ViTMatte model and requirements
-RUN conda run -n productsplat pip install 'git+https://github.com/facebookresearch/detectron2.git'
 COPY setup.py /app/setup.py
 RUN conda run -n productsplat python setup.py
 
