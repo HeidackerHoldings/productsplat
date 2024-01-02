@@ -5,6 +5,7 @@ from tqdm import tqdm
 from pathlib import Path
 from matting import get_matted_frames
 import shutil
+import pycolmap
 import argparse
 
 DATA = (Path(__file__).parent / "data").resolve()
@@ -60,7 +61,7 @@ def save_frames(frames: list[np.ndarray], output: Path = OUTPUT / "input"):
 
 
 def colmap_pipeline(file: Path):
-    ...
+    pycolmap.extract_features(database_path, file)
 
 
 def reset(clean: bool =True):
@@ -69,10 +70,26 @@ def reset(clean: bool =True):
     OUTPUT.mkdir(exist_ok=True)
 
 def main():
+
+    # Cleanup
     reset(clean=True)
-    frames = process_video(INPUT, 1)
+
+    # Create training images
+    frames = process_video(INPUT, 20)
     frames = get_matted_frames(frames)
     save_frames(frames)
+
+    # Structure from motion
+    DB = OUTPUT / "db.db"
+    MVS = OUTPUT / "mvs"
+    INPUT = OUTPUT / "input"
+    pycolmap.extract_features(DB, INPUT)
+    pycolmap.match_exhaustive(DB)
+    maps = pycolmap.incremental_mapping(DB, INPUT, OUTPUT)
+    maps[0].write(OUTPUT)
+
+    # Gaussian Splatting
+    ...
 
 
 
