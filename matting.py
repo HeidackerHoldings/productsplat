@@ -143,7 +143,7 @@ def get_matted_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
     # Alpha Matting
     frames, masks = vitmatte(frames, trimaps, lowmem=True, scale=3)
 
-    # Cropping round 2
+    # Cropping round 2 (alpha matting pads to nearest 32px)
     crops = get_crops(masks)
     frames = [apply_crop(frame, crop) for frame, crop in zip(frames, crops)]
 

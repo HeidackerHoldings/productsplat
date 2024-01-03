@@ -58,7 +58,6 @@ def process_video(
 
             pbar.update(1)
 
-    (stream.release() for stream in streams)
     return frames
 
 
@@ -246,7 +245,7 @@ def undistort(images: Path, distorted: Path, output: Path):
     shutil.copytree(images, output / "images")
 
 
-def main(n: int = 250, batch_size: int = 50):
+def main(n: int = 1000, batch_size: int = 100, skip_gen: bool = False):
     DATA = (Path(__file__).parent / "data").resolve()
     VIDEOS = DATA / "vase4"
     OUTPUT = DATA / "out"
@@ -258,16 +257,19 @@ def main(n: int = 250, batch_size: int = 50):
     reset(OUTPUT, clean=True)
 
     # Create training images
-    streams, indices = get_frame_indices(VIDEOS, n, batch_size)
-    total_saved = 0
-    for i, batch_idx in enumerate(indices):
-        print(f"\nBatch {i + 1}: {len(batch_idx)} images...")
-        save_frames(
-            get_matted_frames(process_video(streams, batch_idx)),
-            output=OUTPUT / "input",
-            start_idx=total_saved,
-        )
-        total_saved += len(batch_idx)
+    if not skip_gen:
+        streams, indices = get_frame_indices(VIDEOS, n, batch_size)
+        total_saved = 0
+        for i, batch_idx in enumerate(indices):
+            print(f"\nBatch {i + 1}: {len(batch_idx)} images...")
+            save_frames(
+                get_matted_frames(process_video(streams, batch_idx)),
+                output=OUTPUT / "input",
+                start_idx=total_saved,
+            )
+            total_saved += len(batch_idx)
+        for stream in streams:
+            stream.release()
 
     # Structure from motion
     extract_features(DB, INPUT)
@@ -280,4 +282,4 @@ def main(n: int = 250, batch_size: int = 50):
 
 
 if __name__ == "__main__":
-    main(81, 35)
+    main()
