@@ -17,7 +17,7 @@ def get_masks(images: np.ndarray) -> list[np.ndarray]:
 
 def get_crops(masks: list[np.ndarray]) -> list[tuple[np.ndarray, np.ndarray]]:
     results = []
-    for mask in masks:
+    for mask in tqdm(masks, desc="Cropping Images"):
         mask = np.array(mask)
 
         # Find the coordinates of non-empty (True) values in the mask
@@ -50,18 +50,10 @@ def get_trimaps(
     masks: list[np.ndarray], threshold=0.05, iterations=3
 ) -> list[np.ndarray]:
     threshold = threshold * 255
-
-    trimaps = []
-    for mask in masks:
-        trimap = mask.copy()
-        trimap = trimap.astype("uint8")
-
-        # Erode and dilate the mask
-        trimap = erode_and_dilate(trimap, k_size=(7, 7), iterations=iterations)
-
-        trimaps.append(trimap)
-
-    return trimaps
+    return [
+        erode_and_dilate(mask.astype("uint8"), k_size=(7, 7), iterations=iterations)
+        for mask in masks
+    ]
 
 
 def apply_crop(image: np.ndarray, crop: tuple[np.ndarray, np.ndarray]) -> np.ndarray:
@@ -87,7 +79,7 @@ def vitmatte(
         "hustvl/vitmatte-small-distinctions-646"
     ).to("cuda")
 
-    matted, alphas = [], []
+    matted, masks = [], []
     for image, trimap in tqdm(
         zip(images, trimaps), total=len(images), desc="Performing ViTMatte"
     ):
@@ -125,15 +117,17 @@ def vitmatte(
 
         if lowmem:
             alpha = np.array(
-                Image.fromarray(alpha[..., 0]).resize((alpha.shape[1] * scale, alpha.shape[0] * scale))
+                Image.fromarray(alpha[..., 0]).resize(
+                    (alpha.shape[1] * scale, alpha.shape[0] * scale)
+                )
             )[..., None]
 
         image = np.concatenate([original_image, alpha], axis=2)
 
         matted.append(image)
-        alphas.append(alpha)
+        masks.append(alpha > 0)
 
-    return matted, alphas
+    return matted, masks
 
 
 def get_matted_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
@@ -147,23 +141,22 @@ def get_matted_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
     trimaps = [apply_crop(trimap, crop) for trimap, crop in zip(trimaps, crops)]
 
     # Alpha Matting
-    matted, alphas = vitmatte(frames, trimaps, lowmem=True, scale=3)
+    frames, masks = vitmatte(frames, trimaps, lowmem=True, scale=3)
 
     # Cropping round 2
-    masks = [alpha > 0 for alpha in alphas]
     crops = get_crops(masks)
-    matted = [apply_crop(image, crop) for image, crop in zip(matted, crops)]
+    frames = [apply_crop(frame, crop) for frame, crop in zip(frames, crops)]
 
     # Padding to same size
-    max_width = max(image.shape[1] for image in matted)
-    max_height = max(image.shape[0] for image in matted)
-    matted = [
+    max_width = max(image.shape[1] for image in frames)
+    max_height = max(image.shape[0] for image in frames)
+    frames = [
         np.array(
             ImageOps.pad(
                 Image.fromarray(image), (max_width, max_height), centering=(0, 0)
             )
         )
-        for image in matted
+        for image in frames
     ]
 
-    return matted
+    return frames

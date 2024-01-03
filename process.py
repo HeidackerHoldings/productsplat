@@ -8,7 +8,9 @@ import shutil
 import argparse
 
 
-def process_video(file: Path, n: int) -> np.ndarray:
+def get_frame_indices(
+    file: Path, n: int, batch_size: int
+) -> tuple[list[cv2.VideoCapture], list[list[tuple[int, int]]]]:
     streams = [
         cv2.VideoCapture(str(file.joinpath(name)))
         for name in os.listdir(file)
@@ -18,7 +20,7 @@ def process_video(file: Path, n: int) -> np.ndarray:
     frames_per_video = [vid.get(cv2.CAP_PROP_FRAME_COUNT) for vid in streams]
     total_frames = int(sum(frames_per_video))
 
-    video_indices = [[] for _ in range(len(streams))]
+    video_indices = []
     current_frames = 0
     current_video_index = 0
     spread = total_frames / n
@@ -30,32 +32,43 @@ def process_video(file: Path, n: int) -> np.ndarray:
             current_frames += frames_per_video[current_video_index]
             current_video_index += 1
             adjusted_index = index - current_frames
-        video_indices[current_video_index].append(int(adjusted_index))
+        video_indices.append((int(adjusted_index), current_video_index))
 
+    # batching the video indices
+    indices = (slice(i, i + batch_size) for i in range(0, n, batch_size))
+    video_indices = [video_indices[i] for i in indices]
+
+    return streams, video_indices
+
+
+def process_video(
+    streams: list[cv2.VideoCapture], indices: list[tuple[int, int]]
+) -> np.ndarray:
     frames = []
-    with tqdm(total=n, desc="Extracting Frames") as pbar:
-        for video, index in zip(streams, video_indices):
-            for i in index:
-                video.set(cv2.CAP_PROP_POS_FRAMES, i)
+    with tqdm(total=len(indices), desc="Extracting Frames") as pbar:
+        for frame_idx, stream_idx in indices:
+            stream = streams[stream_idx]
+            stream.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
 
-                ret, frame = video.read()
-                if ret:
-                    frames.append(frame)
+            ret, frame = stream.read()
+            if ret:
+                frames.append(frame)
+            else:
+                print(f"failed to read frame {frame_idx} in stream {stream_idx}")
 
-                pbar.update(1)
+            pbar.update(1)
 
-            video.release()
-
+    (stream.release() for stream in streams)
     return frames
 
 
-def save_frames(frames: list[np.ndarray], output: Path):
+def save_frames(frames: list[np.ndarray], output: Path, start_idx: int):
     output.mkdir(exist_ok=True)
-    for i, frame in enumerate(frames):
-        cv2.imwrite(str(output / f"{i}.png"), frame)    
+    for i, frame in enumerate(tqdm(frames, desc="Saving Images")):
+        cv2.imwrite(str(output / f"{i + start_idx}.png"), frame)
 
 
-def reset(path: Path, clean: bool =True):
+def reset(path: Path, clean: bool = True):
     if clean and path.exists():
         shutil.rmtree(path)
     path.mkdir(exist_ok=True)
@@ -64,19 +77,53 @@ def reset(path: Path, clean: bool =True):
 
 def run_command(command: str, args: dict[str, str]) -> int:
     for key, value in args.items():
+        arg = ""
+
         if value is None:
-            command += f" {key}"
+            arg = f" --{key}"
+        elif isinstance(value, dict):
+            for option, subvalue in value.items():
+                if isinstance(subvalue, bool):
+                    subvalue = str(subvalue).lower()
+                arg += f" --{key}.{option}={subvalue}"
         else:
-            command += f" {key} {value}"
+            arg = f" --{key} {value}"
+
+        command += arg
     return os.system(command)
 
 
 def extract_features(database: Path, images: Path) -> None:
     args = {
-        "--database_path": database,
-        "--image_path": images,
-        "--ImageReader.camera_model": "OPENCV",
-        "--SiftExtraction.use_gpu": "1"
+        "database_path": database,
+        "image_path": images,
+        "ImageReader": {
+            "single_camera": False,
+            "single_camera_per_folder": False,
+            "single_camera_per_image": False,
+            "existing_camera_id": -1,
+            "default_focal_length_factor": 1.2,
+            "camera_model": "SIMPLE_RADIAL",
+        },
+        "SiftExtraction": {
+            "use_gpu": True,
+            "gpu_index": -1,
+            "estimate_affine_shape": False,
+            "upright": False,
+            "domain_size_pooling": False,
+            "num_threads": -1,
+            "max_image_size": 3200,
+            "max_num_features": 8192,
+            "first_octave": -1,
+            "num_octaves": 4,
+            "octave_resolution": 3,
+            "max_num_orientations": 2,
+            "dsp_num_scales": 10,
+            "peak_threshold": 0.0066666666666666671,
+            "edge_threshold": 10,
+            "dsp_min_scale": 0.16666666666666666,
+            "dsp_max_scale": 3,
+        },
     }
     if run_command("colmap feature_extractor", args) != 0:
         raise RuntimeError("Feature extraction failed")
@@ -84,8 +131,27 @@ def extract_features(database: Path, images: Path) -> None:
 
 def exhausive_matching(database: Path):
     args = {
-        "--database_path": database,
-        "--SiftMatching.use_gpu": "1",
+        "database_path": database,
+        "SiftMatching": {
+            "use_gpu": True,
+            "gpu_index": -1,
+            "cross_check": True,
+            "guided_matching": False,
+            "num_threads": -1,
+            "max_num_matches": 32768,
+            "max_ratio": 0.80000000000000004,
+            "max_distance": 0.69999999999999996,
+        },
+        "TwoViewGeometry": {
+            "multiple_models": False,
+            "min_num_inliers": 15,
+            "compute_relative_pose": False,
+            "max_error": 4,
+            "confidence": 0.999,
+            "max_num_trials": 10000,
+            "min_inlier_ratio": 0.25,
+        },
+        "ExhaustiveMatching": {"block_size": 50},
     }
     if run_command("colmap exhaustive_matcher", args) != 0:
         raise RuntimeError("Feature matching failed")
@@ -93,10 +159,67 @@ def exhausive_matching(database: Path):
 
 def incremental_mapping(database: Path, images: Path, output: Path):
     args = {
-        "--database_path": database,
-        "--image_path": images,
-        "--output_path": output,
-        "--Mapper.ba_global_function_tolerance=0.000001": None
+        "database_path": database,
+        "image_path": images,
+        "output_path": output,
+        "Mapper": {
+            "ignore_watermarks": False,
+            "multiple_models": True,
+            "extract_colors": True,
+            "ba_refine_focal_length": True,
+            "ba_refine_principal_point": False,
+            "ba_refine_extra_params": True,
+            "fix_existing_images": False,
+            "tri_ignore_two_view_tracks": True,
+            "min_num_matches": 15,
+            "max_num_models": 50,
+            "max_model_overlap": 20,
+            "min_model_size": 10,
+            "init_image_id1": -1,
+            "init_image_id2": -1,
+            "init_num_trials": 200,
+            "num_threads": -1,
+            "ba_min_num_residuals_for_multi_threading": 50000,
+            "ba_local_num_images": 6,
+            "ba_local_max_num_iterations": 25,
+            "ba_global_images_freq": 500,
+            "ba_global_points_freq": 250000,
+            "ba_global_max_num_iterations": 50,
+            "ba_global_max_refinements": 5,
+            "ba_local_max_refinements": 2,
+            "snapshot_images_freq": 0,
+            "init_min_num_inliers": 100,
+            "init_max_reg_trials": 2,
+            "abs_pose_min_num_inliers": 30,
+            "max_reg_trials": 3,
+            "tri_max_transitivity": 1,
+            "tri_complete_max_transitivity": 5,
+            "tri_re_max_trials": 1,
+            "min_focal_length_ratio": 0.10000000000000001,
+            "max_focal_length_ratio": 10,
+            "max_extra_param": 1,
+            "ba_local_function_tolerance": 0,
+            "ba_global_images_ratio": 1.1000000000000001,
+            "ba_global_points_ratio": 1.1000000000000001,
+            "ba_global_function_tolerance": 0,
+            "ba_global_max_refinement_change": 0.00050000000000000001,
+            "ba_local_max_refinement_change": 0.001,
+            "init_max_error": 4,
+            "init_max_forward_motion": 0.94999999999999996,
+            "init_min_tri_angle": 16,
+            "abs_pose_max_error": 12,
+            "abs_pose_min_inlier_ratio": 0.25,
+            "filter_max_reproj_error": 4,
+            "filter_min_tri_angle": 1.5,
+            "local_ba_min_tri_angle": 6,
+            "tri_create_max_angle_error": 2,
+            "tri_continue_max_angle_error": 2,
+            "tri_merge_max_reproj_error": 4,
+            "tri_complete_max_reproj_error": 4,
+            "tri_re_max_angle_error": 5,
+            "tri_re_min_ratio": 0.20000000000000001,
+            "tri_min_angle": 1.5,
+        },
     }
     if run_command("colmap mapper", args) != 0:
         raise RuntimeError("Incremental mapping failed")
@@ -104,14 +227,14 @@ def incremental_mapping(database: Path, images: Path, output: Path):
 
 def undistort(images: Path, distorted: Path, output: Path):
     args = {
-        "--image_path": images,
-        "--input_path": distorted / "0",
-        "--output_path": output,
-        "--output_type": "COLMAP"
+        "image_path": images,
+        "input_path": distorted / "0",
+        "output_path": output,
+        "output_type": "COLMAP",
     }
     if run_command("colmap image_undistorter", args) != 0:
         raise RuntimeError("Image undistortion failed")
-    
+
     # For some reason sparse/* needs to be sparse/0/*
     sparse = output / "sparse"
     temp = output / "temp"
@@ -123,9 +246,7 @@ def undistort(images: Path, distorted: Path, output: Path):
     shutil.copytree(images, output / "images")
 
 
-
-def main():
-
+def main(n: int = 250, batch_size: int = 50):
     DATA = (Path(__file__).parent / "data").resolve()
     VIDEOS = DATA / "vase4"
     OUTPUT = DATA / "out"
@@ -137,9 +258,16 @@ def main():
     reset(OUTPUT, clean=True)
 
     # Create training images
-    frames = process_video(VIDEOS, 20)
-    frames = get_matted_frames(frames)
-    save_frames(frames, OUTPUT / "input")
+    streams, indices = get_frame_indices(VIDEOS, n, batch_size)
+    total_saved = 0
+    for i, batch_idx in enumerate(indices):
+        print(f"\nBatch {i + 1}: {len(batch_idx)} images...")
+        save_frames(
+            get_matted_frames(process_video(streams, batch_idx)),
+            output=OUTPUT / "input",
+            start_idx=total_saved,
+        )
+        total_saved += len(batch_idx)
 
     # Structure from motion
     extract_features(DB, INPUT)
@@ -151,6 +279,5 @@ def main():
     ...
 
 
-
 if __name__ == "__main__":
-    main()
+    main(81, 35)
