@@ -253,11 +253,11 @@ def main(n: int = 1000, batch_size: int = 100, skip_gen: bool = False):
     DISTORTED = OUTPUT / "distorted"
     DB = OUTPUT / "db.db"
 
-    # Cleanup
-    reset(OUTPUT, clean=True)
-
-    # Create training images
     if not skip_gen:
+        # Cleanup
+        reset(OUTPUT, clean=True)
+
+        # Create training images
         streams, indices = get_frame_indices(VIDEOS, n, batch_size)
         total_saved = 0
         for i, batch_idx in enumerate(indices):
@@ -282,4 +282,9 @@ def main(n: int = 1000, batch_size: int = 100, skip_gen: bool = False):
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-n", type=int, default=1000)
+    parser.add_argument("--batch_size", "-b", type=int, default=100)
+    parser.add_argument("--skip", action=argparse.BooleanOptionalAction, default=False)
+    args = parser.parse_args()
+    main(args.n, args.batch_size, args.skip)
