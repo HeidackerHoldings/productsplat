@@ -157,6 +157,7 @@ def exhausive_matching(database: Path):
 
 
 def incremental_mapping(database: Path, images: Path, output: Path):
+    n_images = len(list(images.iterdir()))
     args = {
         "database_path": database,
         "image_path": images,
@@ -181,8 +182,8 @@ def incremental_mapping(database: Path, images: Path, output: Path):
             "ba_min_num_residuals_for_multi_threading": 50000,
             "ba_local_num_images": 6,
             "ba_local_max_num_iterations": 25,
-            "ba_global_images_freq": 500,
-            "ba_global_points_freq": 250000,
+            "ba_global_images_freq": max(500, 5 * n_images),
+            "ba_global_points_freq": max(250000, 2500 * n_images),
             "ba_global_max_num_iterations": 50,
             "ba_global_max_refinements": 5,
             "ba_local_max_refinements": 2,
@@ -198,8 +199,8 @@ def incremental_mapping(database: Path, images: Path, output: Path):
             "max_focal_length_ratio": 10,
             "max_extra_param": 1,
             "ba_local_function_tolerance": 0,
-            "ba_global_images_ratio": 1.1000000000000001,
-            "ba_global_points_ratio": 1.1000000000000001,
+            "ba_global_images_ratio": 1.5000000000000001,
+            "ba_global_points_ratio": 1.5000000000000001,
             "ba_global_function_tolerance": 0,
             "ba_global_max_refinement_change": 0.00050000000000000001,
             "ba_local_max_refinement_change": 0.001,

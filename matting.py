@@ -148,6 +148,7 @@ def get_matted_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
     frames = [apply_crop(frame, crop) for frame, crop in zip(frames, crops)]
 
     # Padding to same size
+    """
     max_width = max(image.shape[1] for image in frames)
     max_height = max(image.shape[0] for image in frames)
     frames = [
@@ -158,5 +159,6 @@ def get_matted_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
         )
         for image in frames
     ]
+    """
 
     return frames
