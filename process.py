@@ -6,6 +6,7 @@ from pathlib import Path
 from matting import get_matted_frames
 import shutil
 import argparse
+from typing import Optional
 
 
 def get_frame_indices(
@@ -74,30 +75,7 @@ def reset(path: Path, clean: bool = True):
     (path / "distorted").mkdir(exist_ok=True)
 
 
-def capture_stdout(command: str) -> str:
-    with os.popen(command) as stream:
-        return stream.read()
-
-
-def get_model_stats(path: Path) -> dict[str, int]:
-    command = f"colmap model_analyzer --path {path} 2>&1"
-    output = capture_stdout(command)
-    lines = [line.split("] ")[1].split(": ") for line in output.split("\n") if line]
-    stats = {}
-    for key, value in lines:
-        key = key.lower().replace(" ", "_")
-        if "px" in value:
-            value = float(value[:-2])
-        elif "." in value:
-            value = float(value)
-        else:
-            value = int(value)
-        stats[key] = value
-
-    return stats
-
-
-def run_command(command: str, args: dict[str, str]) -> int:
+def format_command(command: str, args: dict[str, str]) -> str:
     for key, value in args.items():
         arg = ""
 
@@ -112,7 +90,37 @@ def run_command(command: str, args: dict[str, str]) -> int:
             arg = f" --{key} {value}"
 
         command += arg
+
+    return command
+
+
+def run_command(
+    command: str, args: Optional[dict[str, str]] = None, capture_stdout: bool = False
+) -> int:
+    args = {} if args is None else args
+    command = format_command(command, args)
+    if capture_stdout:
+        with os.popen(f"{command} 2>&1") as stream:
+            return stream.read()
     return os.system(command)
+
+
+def get_model_stats(path: Path) -> dict[str, int]:
+    command = f"colmap model_analyzer --path {path}"
+    output = run_command(command, capture_stdout=True)
+    lines = [line.split("] ")[1].split(": ") for line in output.split("\n") if line]
+    stats = {}
+    for key, value in lines:
+        key = key.lower().replace(" ", "_")
+        if "px" in value:
+            value = float(value[:-2])
+        elif "." in value:
+            value = float(value)
+        else:
+            value = int(value)
+        stats[key] = value
+
+    return stats
 
 
 def reorganize_models(
@@ -153,14 +161,40 @@ def merge_models(path: Path) -> Path:
     """
     models = reorganize_models(path)
     merged = path / "merged"
+    temp = path / "temp"
+    merged.mkdir(exist_ok=True)
+    temp.mkdir(exist_ok=True)
+
+    # Overwrite the existing merged model
+    shutil.rmtree(merged, ignore_errors=True)
     shutil.copytree(models[0][0], merged, dirs_exist_ok=True)
 
     command = "colmap model_merger"
-    args = {"input_path1": merged, "input_path2": merged, "output_path": merged}
-    for model, _ in models[1:]:
-        args["input_path2"] = model
-        run_command(command, args)
+    args = {"input_path1": merged, "input_path2": merged, "output_path": temp}
 
+    for model, _ in models[1:]:
+        # Clean out temp dir (not sure if colmap merge overwrites)
+        shutil.rmtree(temp)
+        temp.mkdir()
+
+        args["input_path2"] = model
+        print(f"Merging {merged} with {model}...")
+        formatted = f"{format_command(command, args)}"
+        result = run_command(formatted, capture_stdout=True)
+        status = result.split("=> Merge ")[-1].split("\n")[0]
+        print(result)
+
+        # Ensure that the merge was successful before copying back into "merged"
+        if status == "succeeded":
+            print(f"Saving Successful Merge")
+            shutil.rmtree(merged)
+            shutil.copytree(temp, merged)
+        elif status == "failed":
+            print("Merge unsuccessful")
+        else:
+            print("Merge failed for unknown reasons")
+
+    shutil.rmtree(temp)
     return merged
 
 
@@ -380,8 +414,8 @@ def main(n: int = 1000, batch_size: int = 100, skip_gen: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", type=int, default=40)
-    parser.add_argument("--batch_size", "-b", type=int, default=40)
+    parser.add_argument("-n", type=int, default=200)
+    parser.add_argument("--batch_size", "-b", type=int, default=100)
     parser.add_argument("--skip", action=argparse.BooleanOptionalAction, default=False)
     args = parser.parse_args()
     main(args.n, args.batch_size, args.skip)
