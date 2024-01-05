@@ -97,11 +97,31 @@ def get_model_stats(path: Path) -> dict[str, int]:
     return stats
 
 
+def run_command(command: str, args: dict[str, str]) -> int:
+    for key, value in args.items():
+        arg = ""
+
+        if value is None:
+            arg = f" --{key}"
+        elif isinstance(value, dict):
+            for option, subvalue in value.items():
+                if isinstance(subvalue, bool):
+                    subvalue = str(subvalue).lower()
+                arg += f" --{key}.{option}={subvalue}"
+        else:
+            arg = f" --{key} {value}"
+
+        command += arg
+    return os.system(command)
+
+
 def reorganize_models(
     path: Path, key: str = "registered_images"
 ) -> list[tuple[Path, float]]:
     """
     Reorganizes the models in the path based on the number of registered images
+    Model ordering can be changed by passing in new stats key
+    See output of get_model_stats for available keys
 
     model subdirs must be have integer names (standard colmap output)
     """
@@ -123,11 +143,13 @@ def reorganize_models(
     return [(file, val) for file, val in stats]
 
 
-def merge_models(path: Path) -> None:
+def merge_models(path: Path) -> Path:
     """
     Merges models in the path into a new subdir "merged"
 
     model subdirs must be have integer names (standard colmap output)
+
+    Returns the merged model output path
     """
     models = reorganize_models(path)
     merged = path / "merged"
@@ -139,23 +161,27 @@ def merge_models(path: Path) -> None:
         args["input_path2"] = model
         run_command(command, args)
 
+    return merged
 
-def run_command(command: str, args: dict[str, str]) -> int:
-    for key, value in args.items():
-        arg = ""
 
-        if value is None:
-            arg = f" --{key}"
-        elif isinstance(value, dict):
-            for option, subvalue in value.items():
-                if isinstance(subvalue, bool):
-                    subvalue = str(subvalue).lower()
-                arg += f" --{key}.{option}={subvalue}"
-        else:
-            arg = f" --{key} {value}"
-
-        command += arg
-    return os.system(command)
+def bundle_adjust(path: Path) -> None:
+    args = {
+        "input_path": path,
+        "output_path": path,
+        "BundleAdjustment": {
+            "max_num_iterations": 100,
+            "max_linear_solver_iterations": 200,
+            "function_tolerance": 0,
+            "gradient_tolerance": 0,
+            "parameter_tolerance": 0,
+            "refine_focal_length": 1,
+            "refine_principal_point": 0,
+            "refine_extra_params": 1,
+            "refine_extrinsics": 1,
+        },
+    }
+    if run_command("colmap bundle_adjuster", args) != 0:
+        raise RuntimeError("Bundle adjustment failed")
 
 
 def extract_features(database: Path, images: Path) -> None:
@@ -294,7 +320,7 @@ def incremental_mapping(database: Path, images: Path, output: Path):
 def undistort(images: Path, distorted: Path, output: Path):
     args = {
         "image_path": images,
-        "input_path": distorted / "0",
+        "input_path": distorted,
         "output_path": output,
         "output_type": "COLMAP",
     }
@@ -342,7 +368,11 @@ def main(n: int = 1000, batch_size: int = 100, skip_gen: bool = False):
     extract_features(DB, INPUT)
     exhausive_matching(DB)
     incremental_mapping(DB, INPUT, DISTORTED)
-    undistort(INPUT, DISTORTED, OUTPUT)
+
+    MERGED = merge_models(DISTORTED)
+    bundle_adjust(MERGED)
+
+    undistort(INPUT, MERGED, OUTPUT)
 
     # Gaussian Splatting
     ...
@@ -350,8 +380,8 @@ def main(n: int = 1000, batch_size: int = 100, skip_gen: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", type=int, default=1000)
-    parser.add_argument("--batch_size", "-b", type=int, default=100)
+    parser.add_argument("-n", type=int, default=40)
+    parser.add_argument("--batch_size", "-b", type=int, default=40)
     parser.add_argument("--skip", action=argparse.BooleanOptionalAction, default=False)
     args = parser.parse_args()
     main(args.n, args.batch_size, args.skip)
