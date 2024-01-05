@@ -74,6 +74,72 @@ def reset(path: Path, clean: bool = True):
     (path / "distorted").mkdir(exist_ok=True)
 
 
+def capture_stdout(command: str) -> str:
+    with os.popen(command) as stream:
+        return stream.read()
+
+
+def get_model_stats(path: Path) -> dict[str, int]:
+    command = f"colmap model_analyzer --path {path} 2>&1"
+    output = capture_stdout(command)
+    lines = [line.split("] ")[1].split(": ") for line in output.split("\n") if line]
+    stats = {}
+    for key, value in lines:
+        key = key.lower().replace(" ", "_")
+        if "px" in value:
+            value = float(value[:-2])
+        elif "." in value:
+            value = float(value)
+        else:
+            value = int(value)
+        stats[key] = value
+
+    return stats
+
+
+def reorganize_models(
+    path: Path, key: str = "registered_images"
+) -> list[tuple[Path, float]]:
+    """
+    Reorganizes the models in the path based on the number of registered images
+
+    model subdirs must be have integer names (standard colmap output)
+    """
+    models = [model for model in path.iterdir() if model.name.isnumeric()]
+    stats = sorted(
+        [[model, get_model_stats(model)[key]] for model in models],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    for i, (file, _) in enumerate(stats):
+        newfile = file.with_name(f"temp{file.name}")
+        shutil.move(file, newfile)
+        stats[i][0] = newfile
+    for i, (file, _) in enumerate(stats):
+        newfile = file.with_name(f"{i}")
+        shutil.move(file, newfile)
+        stats[i][0] = newfile
+
+    return [(file, val) for file, val in stats]
+
+
+def merge_models(path: Path) -> None:
+    """
+    Merges models in the path into a new subdir "merged"
+
+    model subdirs must be have integer names (standard colmap output)
+    """
+    models = reorganize_models(path)
+    merged = path / "merged"
+    shutil.copytree(models[0][0], merged, dirs_exist_ok=True)
+
+    command = "colmap model_merger"
+    args = {"input_path1": merged, "input_path2": merged, "output_path": merged}
+    for model, _ in models[1:]:
+        args["input_path2"] = model
+        run_command(command, args)
+
+
 def run_command(command: str, args: dict[str, str]) -> int:
     for key, value in args.items():
         arg = ""
